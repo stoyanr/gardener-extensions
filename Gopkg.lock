@@ -198,7 +198,7 @@
   revision = "d6023ce2651d8eafb5c75bb0c7167536102ec9f5"
 
 [[projects]]
-  digest = "1:9fe73c051c43f3f735938e569f6f698f5e0014b2afef3b7f57f15c8b7c6cefd4"
+  digest = "1:1ab9ceaa0fc735345402614ad32ff4e594e75401c34b66e35208981012492978"
   name = "github.com/gardener/gardener"
   packages = [
     "pkg/apis/core",
@@ -232,7 +232,8 @@
     "pkg/utils/secrets",
   ]
   pruneopts = "NUT"
-  revision = "1ebbe303f020e91d42e8689144bac3904cacb08b"
+  revision = "3a62b38af31a65c11dcc800b060eabc5e22289ba"
+  source = "github.com/stoyanr/gardener"
 
 [[projects]]
   digest = "1:b678acaf8766b6df36723a4adefc3302191a34c22b7a38b0abaf5f6d3dd24090"
@@ -1705,7 +1706,6 @@
     "github.com/go-logr/logr",
     "github.com/gobuffalo/packr",
     "github.com/gobuffalo/packr/v2",
-    "github.com/gobuffalo/packr/v2/file/resolver",
     "github.com/golang/mock/gomock",
     "github.com/onsi/ginkgo",
     "github.com/onsi/ginkgo/extensions/table",

@@ -19,8 +19,9 @@ import (
 
 	extensionscontroller "github.com/gardener/gardener-extensions/pkg/controller"
 
-	extensions1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -28,88 +29,115 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-type secretToControlPlaneMapper struct {
+// NewMapper creates and returns a mapper that maps clusters and secrets to their ControlPlanes.
+func NewMapper(client client.Client, predicates ...predicate.Predicate) handler.Mapper {
+	return &mapper{
+		client:     client,
+		predicates: predicates,
+	}
+}
+
+type mapper struct {
 	client     client.Client
 	predicates []predicate.Predicate
 }
 
-func (m *secretToControlPlaneMapper) Map(obj handler.MapObject) []reconcile.Request {
+func (m *mapper) Map(obj handler.MapObject) []reconcile.Request {
 	if obj.Object == nil {
 		return nil
 	}
 
-	secret, ok := obj.Object.(*corev1.Secret)
-	if !ok {
+	// Get object accessor
+	accessor, err := meta.Accessor(obj.Object)
+	if err != nil {
 		return nil
 	}
 
-	cpList := &extensions1alpha1.ControlPlaneList{}
-	if err := m.client.List(context.TODO(), client.InNamespace(secret.Namespace), cpList); err != nil {
+	// List all controlplanes in the object's namespace
+	cpList := &extensionsv1alpha1.ControlPlaneList{}
+	if err := m.client.List(context.TODO(), client.InNamespace(accessor.GetNamespace()), cpList); err != nil {
 		return nil
 	}
 
 	var requests []reconcile.Request
 	for _, cp := range cpList.Items {
+		// Check predicates
 		if !extensionscontroller.PredicatesMatch(m.predicates, &cp) {
 			continue
 		}
 
-		if cp.Spec.SecretRef.Name == secret.Name {
-			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Namespace: cp.Namespace,
-					Name:      cp.Name,
-				},
-			})
+		// Check conditions depending on object type
+		switch obj.Object.(type) {
+		case *extensionsv1alpha1.Cluster:
+			// For clusters, check that the cluster name matches the control plane namespace
+			if accessor.GetName() == cp.Namespace {
+				requests = append(requests, getRequest(&cp))
+			}
+		case *corev1.Secret:
+			// For secrets, check that the secret name matches the referenced secret name
+			if accessor.GetName() == cp.Spec.SecretRef.Name {
+				requests = append(requests, getRequest(&cp))
+			}
 		}
 	}
 	return requests
 }
 
-// SecretToControlPlaneMapper returns a mapper that returns requests for ControlPlanes whose
-// referenced secrets have been modified.
-func SecretToControlPlaneMapper(client client.Client, predicates []predicate.Predicate) handler.Mapper {
-	return &secretToControlPlaneMapper{client, predicates}
+// NewOwnerMapper creates and returns a mapper that maps objects owned by a ControlPlane to their owner.
+func NewOwnerMapper(client client.Client, predicates ...predicate.Predicate) handler.Mapper {
+	return &ownerMapper{
+		client:     client,
+		predicates: predicates,
+	}
 }
 
-type clusterToControlPlaneMapper struct {
+type ownerMapper struct {
 	client     client.Client
 	predicates []predicate.Predicate
 }
 
-func (m *clusterToControlPlaneMapper) Map(obj handler.MapObject) []reconcile.Request {
+func (m *ownerMapper) Map(obj handler.MapObject) []reconcile.Request {
 	if obj.Object == nil {
 		return nil
 	}
 
-	cluster, ok := obj.Object.(*extensions1alpha1.Cluster)
-	if !ok {
+	// Get object accessor
+	accessor, err := meta.Accessor(obj.Object)
+	if err != nil {
 		return nil
 	}
 
-	cpList := &extensions1alpha1.ControlPlaneList{}
-	if err := m.client.List(context.TODO(), client.InNamespace(cluster.Namespace), cpList); err != nil {
-		return nil
-	}
-
-	var requests []reconcile.Request
-	for _, cp := range cpList.Items {
-		if !extensionscontroller.PredicatesMatch(m.predicates, &cp) {
-			continue
+	// Get the ControlPlane owner name
+	var name string
+	for _, ref := range accessor.GetOwnerReferences() {
+		if ref.APIVersion == extensionsv1alpha1.SchemeGroupVersion.String() && ref.Kind == extensionsv1alpha1.ControlPlaneResource {
+			name = ref.Name
+			break
 		}
-
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: cp.Namespace,
-				Name:      cp.Name,
-			},
-		})
 	}
-	return requests
+	if name == "" {
+		return nil
+	}
+
+	// Get the ControlPlane owner
+	cp := &extensionsv1alpha1.ControlPlane{}
+	if err := m.client.Get(context.TODO(), client.ObjectKey{Namespace: accessor.GetNamespace(), Name: name}, cp); err != nil {
+		return nil
+	}
+
+	// Check predicates
+	if !extensionscontroller.PredicatesMatch(m.predicates, cp) {
+		return nil
+	}
+
+	return []reconcile.Request{getRequest(cp)}
 }
 
-// ClusterToControlPlaneMapper returns a mapper that returns requests for ControlPlanes whose
-// referenced clusters have been modified.
-func ClusterToControlPlaneMapper(client client.Client, predicates []predicate.Predicate) handler.Mapper {
-	return &clusterToControlPlaneMapper{client, predicates}
+func getRequest(cp *extensionsv1alpha1.ControlPlane) reconcile.Request {
+	return reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: cp.Namespace,
+			Name:      cp.Name,
+		},
+	}
 }

@@ -19,6 +19,7 @@ import (
 
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -44,8 +45,10 @@ type AddArgs struct {
 	// given actuator.
 	ControllerOptions controller.Options
 	// Predicates are the predicates to use.
-	// If unset, GenerationChangedPredicate will be used.
+	// If unset, DefaultPredicates will be used.
 	Predicates []predicate.Predicate
+	// WatchTypes is a list of types to be watched.
+	WatchTypes []runtime.Object
 }
 
 // DefaultPredicates returns the default predicates for a controlplane reconciler.
@@ -60,11 +63,11 @@ func DefaultPredicates(mgr manager.Manager) []predicate.Predicate {
 // and Start it when the Manager is Started.
 func Add(mgr manager.Manager, args AddArgs) error {
 	args.ControllerOptions.Reconciler = NewReconciler(mgr, args.Actuator)
-	return add(mgr, args.Type, args.ControllerOptions, args.Predicates)
+	return add(mgr, args.Type, args.ControllerOptions, args.Predicates, args.WatchTypes)
 }
 
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
-func add(mgr manager.Manager, typeName string, options controller.Options, predicates []predicate.Predicate) error {
+func add(mgr manager.Manager, typeName string, options controller.Options, predicates []predicate.Predicate, watchTypes []runtime.Object) error {
 	ctrl, err := controller.New(ControllerName, mgr, options)
 	if err != nil {
 		return err
@@ -75,14 +78,22 @@ func add(mgr manager.Manager, typeName string, options controller.Options, predi
 	}
 	predicates = append(predicates, TypePredicate(typeName))
 
+	// Add standard watches
 	if err := ctrl.Watch(&source.Kind{Type: &extensionsv1alpha1.ControlPlane{}}, &handler.EnqueueRequestForObject{}, predicates...); err != nil {
 		return err
 	}
-	if err := ctrl.Watch(&source.Kind{Type: &corev1.Secret{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: SecretToControlPlaneMapper(mgr.GetClient(), predicates)}); err != nil {
+	if err := ctrl.Watch(&source.Kind{Type: &corev1.Secret{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: NewMapper(mgr.GetClient(), predicates...)}); err != nil {
 		return err
 	}
-	if err := ctrl.Watch(&source.Kind{Type: &extensionsv1alpha1.Cluster{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: ClusterToControlPlaneMapper(mgr.GetClient(), predicates)}); err != nil {
+	if err := ctrl.Watch(&source.Kind{Type: &extensionsv1alpha1.Cluster{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: NewMapper(mgr.GetClient(), predicates...)}); err != nil {
 		return err
+	}
+
+	// Add watches for owned objects
+	for _, t := range watchTypes {
+		if err := ctrl.Watch(&source.Kind{Type: t}, &handler.EnqueueRequestForOwner{OwnerType: &extensionsv1alpha1.ControlPlane{}, IsController: true }); err != nil {
+			return err
+		}
 	}
 	return nil
 }

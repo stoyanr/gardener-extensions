@@ -42,6 +42,7 @@ func AddWithOptions(mgr manager.Manager, opts controller.Options) error {
 		Actuator:          NewActuator(),
 		Type:              aws.Type,
 		ControllerOptions: opts,
+		WatchTypes:        types,
 	})
 }
 

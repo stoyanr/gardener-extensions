@@ -3,6 +3,10 @@ kind: ConfigMap
 metadata:
   name: cloud-provider-config
   namespace: {{ .Release.Namespace }}
+  {{- if .Values.ownerReferences }}
+  ownerReferences:
+{{ toYaml .Values.ownerReferences | indent 4 }}
+  {{- end }}
 data:
   cloudprovider.conf: |
 {{ .Values.cloudProviderConfig | indent 4 }}

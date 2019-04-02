@@ -9,7 +9,8 @@ required = [
 
 [[override]]
   name = "github.com/gardener/gardener"
-  revision = "1ebbe303f020e91d42e8689144bac3904cacb08b"
+  source = "github.com/stoyanr/gardener"
+  revision = "3a62b38af31a65c11dcc800b060eabc5e22289ba"
 
 [[override]]
   name = "sigs.k8s.io/controller-runtime"

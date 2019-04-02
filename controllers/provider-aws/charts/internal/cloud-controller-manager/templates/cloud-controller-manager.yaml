@@ -6,6 +6,10 @@ metadata:
   labels:
     app: kubernetes
     role: cloud-controller-manager
+  {{- if .Values.ownerReferences }}
+  ownerReferences:
+{{ toYaml .Values.ownerReferences | indent 4 }}
+  {{- end }}
 spec:
   type: ClusterIP
   clusterIP: None
@@ -13,9 +17,11 @@ spec:
   - name: metrics
     port: {{ include "cloud-controller-manager.port" . }}
     protocol: TCP
+    targetPort: {{ include "cloud-controller-manager.port" . }}
   selector:
     app: kubernetes
     role: cloud-controller-manager
+  sessionAffinity: None
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -26,19 +32,30 @@ metadata:
     garden.sapcloud.io/role: controlplane
     app: kubernetes
     role: cloud-controller-manager
+  {{- if .Values.ownerReferences }}
+  ownerReferences:
+{{ toYaml .Values.ownerReferences | indent 4 }}
+  {{- end }}
 spec:
+  progressDeadlineSeconds: 600
   revisionHistoryLimit: 0
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
       app: kubernetes
       role: cloud-controller-manager
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
   template:
     metadata:
 {{- if .Values.podAnnotations }}
       annotations:
 {{ toYaml .Values.podAnnotations | indent 8 }}
 {{- end }}
+      creationTimestamp: null
       labels:
         garden.sapcloud.io/role: controlplane
         app: kubernetes
@@ -114,17 +131,22 @@ spec:
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
+      securityContext: {}
       terminationGracePeriodSeconds: 30
       volumes:
       - name: cloud-controller-manager
         secret:
           secretName: cloud-controller-manager
+          defaultMode: 420
       - name: cloud-controller-manager-server
         secret:
           secretName: cloud-controller-manager-server
+          defaultMode: 420
       - name: cloud-provider-config
         configMap:
           name: cloud-provider-config
+          defaultMode: 420
       - name: cloudprovider
         secret:
           secretName: cloudprovider
+          defaultMode: 420

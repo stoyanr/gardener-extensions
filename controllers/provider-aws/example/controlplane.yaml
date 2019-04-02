@@ -2,7 +2,8 @@
 apiVersion: extensions.gardener.cloud/v1alpha1
 kind: Cluster
 metadata:
-  name: default
+  name: shoot--dev--local
+  namespace: shoot--dev--local
 spec:
   cloudProfile:
     apiVersion: garden.sapcloud.io/v1beta1
@@ -30,12 +31,13 @@ apiVersion: extensions.gardener.cloud/v1alpha1
 kind: ControlPlane
 metadata:
   name: control-plane
+  namespace: shoot--dev--local
 spec:
   type: aws
   region: eu-west-1
   secretRef:
     name: cloudprovider
-    namespace: shoot--foo-bar
+    namespace: shoot--dev--local
   providerConfig:
     apiVersion: aws.provider.extensions.gardener.cloud/v1alpha1
     kind: ControlPlaneConfig

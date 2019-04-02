@@ -18,6 +18,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/types"
+	"reflect"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -98,7 +101,12 @@ func (c *Applier) applyObject(ctx context.Context, desired *unstructured.Unstruc
 		return err
 	}
 
-	return c.client.Update(ctx, desired)
+	// Update only if desired and current are different after merging
+	stripMetadataAndStatus(current)
+	if !deepEqual(desired.Object, current.Object) {
+		return c.client.Update(ctx, desired)
+	}
+	return nil
 }
 
 // DefaultApplierOptions contains options for common k8s objects, e.g. Service, ServiceAccount.
@@ -108,7 +116,6 @@ var DefaultApplierOptions = ApplierOptions{
 			// We do not want to overwrite a Service's `.spec.clusterIP' or '.spec.ports[*].nodePort' values.
 			oldPorts := oldObj.Object["spec"].(map[string]interface{})["ports"].([]interface{})
 			newPorts := newObj.Object["spec"].(map[string]interface{})["ports"].([]interface{})
-			ports := []map[string]interface{}{}
 
 			// Check whether ports of the newObj have also been present previously. If yes, take the nodePort
 			// of the existing object.
@@ -125,11 +132,9 @@ var DefaultApplierOptions = ApplierOptions{
 						}
 					}
 				}
-				ports = append(ports, np)
 			}
 
 			newObj.Object["spec"].(map[string]interface{})["clusterIP"] = oldObj.Object["spec"].(map[string]interface{})["clusterIP"]
-			newObj.Object["spec"].(map[string]interface{})["ports"] = ports
 		},
 		"ServiceAccount": func(newObj, oldObj *unstructured.Unstructured) {
 			// We do not want to overwrite a ServiceAccount's `.secrets[]` list or `.imagePullSecrets[]`.
@@ -140,16 +145,100 @@ var DefaultApplierOptions = ApplierOptions{
 }
 
 func (c *Applier) mergeObjects(newObj, oldObj *unstructured.Unstructured, mergeFuncs map[Kind]MergeFunc) error {
+	// Keep resource version and finalizers
 	newObj.SetResourceVersion(oldObj.GetResourceVersion())
+	newObj.SetFinalizers(oldObj.GetFinalizers())
 
-	// We do not want to overwrite the Finalizers.
-	newObj.Object["metadata"].(map[string]interface{})["finalizers"] = oldObj.Object["metadata"].(map[string]interface{})["finalizers"]
-
+	// Apply merge functions
 	if merge, ok := mergeFuncs[Kind(newObj.GetKind())]; ok {
 		merge(newObj, oldObj)
 	}
 
 	return nil
+}
+
+func stripMetadataAndStatus(obj *unstructured.Unstructured) {
+	// Strip metadata
+	obj.SetUID(types.UID(""))
+	obj.SetSelfLink("")
+	obj.SetCreationTimestamp(metav1.Time{})
+	obj.SetGeneration(0)
+
+	// Strip special annotations
+	specialAnnotationPrefixes := []string{
+		"deployment.kubernetes.io/",
+	}
+	annotations := obj.GetAnnotations()
+	for k := range annotations {
+		for _, prefix := range specialAnnotationPrefixes {
+			if strings.HasPrefix(k, prefix) {
+				delete(annotations, k)
+			}
+		}
+	}
+	if len(annotations) == 0 {
+		annotations = nil
+	}
+	obj.SetAnnotations(annotations)
+
+	// Strip status
+	delete(obj.Object, "status")
+}
+
+func deepEqual(x, y interface{}) bool {
+	switch x := x.(type) {
+	case map[string]interface{}:
+		y, ok := y.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		if (x == nil) != (y == nil) {
+			return false
+		}
+		if len(x) != len(y) {
+			return false
+		}
+		for k := range x {
+			if !deepEqual(x[k], y[k]) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		y, ok := y.([]interface{})
+		if !ok {
+			return false
+		}
+		if (x == nil) != (y == nil) {
+			return false
+		}
+		if len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !deepEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case int64:
+		return numberEqual(y, float64(x))
+	case float64:
+		return numberEqual(y, x)
+	default:
+		return reflect.DeepEqual(x, y)
+	}
+}
+
+func numberEqual(v interface{}, n float64) bool {
+	switch v := v.(type) {
+	case int64:
+		return float64(v) == n
+	case float64:
+		return v == n
+	default:
+		return false
+	}
 }
 
 // ApplyManifest is a function which does the same like `kubectl apply -f <file>`. It takes a bunch of manifests <m>,

@@ -151,6 +151,12 @@ var ccmChart = &chart.Chart{
 	},
 }
 
+var types = []runtime.Object{
+	&corev1.ConfigMap{},
+	&corev1.Service{},
+	&appsv1.Deployment{},
+}
+
 // NewActuator creates a new Actuator that acts upon and updates the status of ControlPlane resources.
 func NewActuator() controlplane.Actuator {
 	return &actuator{
